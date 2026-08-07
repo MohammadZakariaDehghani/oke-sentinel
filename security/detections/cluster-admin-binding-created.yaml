@@ -1,0 +1,180 @@
+id: cluster-admin-binding-created
+name: Binding to cluster-admin or a wildcard role created
+severity: critical
+enabled: true
+type: query
+
+index: logs-kubernetes.audit-*
+interval: 5m
+lookback: 5m
+
+description: >-
+  A RoleBinding or ClusterRoleBinding was created or modified to reference
+  cluster-admin, or a role granting all verbs on all resources was defined.
+
+rationale: >-
+  This is the last step of most Kubernetes privilege escalation chains, and the
+  one that turns a foothold into ownership of the cluster. It is also
+  low-volume and unambiguous: in a cluster managed from Git, bindings change
+  when someone deploys a change, and cluster-admin bindings essentially never
+  change.
+
+  The wildcard half of the rule matters as much as the cluster-admin half. An
+  attacker who knows cluster-admin is watched will define their own ClusterRole
+  with `verbs: ["*"]` on `resources: ["*"]`, give it an unremarkable name, and
+  bind to that instead. The permissions are identical and the name is not.
+
+  Also worth noting what this rule does not catch: escalation through
+  `escalate` or `bind` permissions, or through a controller that will create a
+  binding on your behalf. Those are real and are the reason this rule is one
+  layer rather than the whole answer.
+
+mitre:
+  - tactic: Privilege Escalation
+    tactic_id: TA0004
+    technique: Valid Accounts
+    technique_id: T1078
+  - tactic: Persistence
+    tactic_id: TA0003
+    technique: Account Manipulation
+    technique_id: T1098
+
+false_positives:
+  - Installing an operator via Helm. Many charts bind their controller to
+    cluster-admin, which is bad practice but common. Expect this to fire during
+    a legitimate install.
+  - Cluster bootstrap, where the initial admin bindings are created.
+
+response:
+  - Read requestObject.subjects to see who was granted the access — that is the
+    account to investigate, not necessarily the one who made the change.
+  - Confirm the change corresponds to a merged pull request. If it does not,
+    revoke first and ask afterwards.
+  - Check whether a token was minted for the subject shortly before or after;
+    see serviceaccount-token-requested.
+
+query:
+  bool:
+    filter:
+      - term:
+          stage: ResponseComplete
+      - terms:
+          verb: [create, update, patch]
+      - range:
+          responseStatus.code:
+            lt: 400
+    minimum_should_match: 1
+    should:
+      # A binding that references cluster-admin.
+      - bool:
+          filter:
+            - terms:
+                objectRef.resource: [clusterrolebindings, rolebindings]
+            - term:
+                requestObject.roleRef.name: cluster-admin
+      # A role that grants everything, whatever it is called.
+      - bool:
+          filter:
+            - terms:
+                objectRef.resource: [clusterroles, roles]
+            - term:
+                requestObject.rules.verbs: "*"
+            - term:
+                requestObject.rules.resources: "*"
+
+fixtures:
+  match:
+    - description: A service account is bound to cluster-admin
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: bob@example.com
+        objectRef:
+          resource: clusterrolebindings
+          name: totally-normal-binding
+        responseStatus:
+          code: 201
+        requestObject:
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-admin
+          subjects:
+            - kind: ServiceAccount
+              name: sample-api
+              namespace: sample-app
+
+    - description: A wildcard ClusterRole under an innocuous name
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:default:builder
+        objectRef:
+          resource: clusterroles
+          name: metrics-reader
+        responseStatus:
+          code: 201
+        requestObject:
+          rules:
+            - apiGroups: ["*"]
+              resources: ["*"]
+              verbs: ["*"]
+
+  no_match:
+    - description: A narrow, ordinary role binding
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:kube-system:deployment-controller
+        objectRef:
+          resource: rolebindings
+          namespace: sample-app
+          name: sample-api-config-reader
+        responseStatus:
+          code: 201
+        requestObject:
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: config-reader
+          subjects:
+            - kind: ServiceAccount
+              name: sample-api
+              namespace: sample-app
+
+    - description: A role with specific verbs on specific resources
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: alice@example.com
+        objectRef:
+          resource: clusterroles
+          name: filebeat
+        responseStatus:
+          code: 201
+        requestObject:
+          rules:
+            - apiGroups: [""]
+              resources: ["pods", "namespaces"]
+              verbs: ["get", "list", "watch"]
+
+    - description: A denied attempt to create a cluster-admin binding
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:sample-app:sample-api
+        objectRef:
+          resource: clusterrolebindings
+          name: pwn
+        responseStatus:
+          code: 403
+        requestObject:
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-admin

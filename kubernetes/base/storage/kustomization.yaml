@@ -1,0 +1,7 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Not part of ../kustomization.yaml: the OCI Block Volume provisioner does not
+# exist on kind, so only the dev and prod overlays pull this in.
+resources:
+  - storageclass.yaml

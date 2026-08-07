@@ -1,0 +1,47 @@
+# Replace both nodeSets with a single all-roles node.
+#
+# A replace on /spec/nodeSets rather than two edits: the base has "master" and
+# "data" and this has neither, so there is no per-nodeSet patch that gets there.
+- op: replace
+  path: /spec/nodeSets
+  value:
+    - name: all
+      count: 1
+      config:
+        # Every role on one node. discovery.type is not set — ECK handles
+        # single-node bootstrapping through cluster.initial_master_nodes.
+        node.roles: ["master", "data", "ingest"]
+        # kind nodes are containers and vm.max_map_count is inherited from the
+        # host, which on a CI runner is usually too low. Turning off mmap means
+        # Elasticsearch uses niofs and starts anyway.
+        node.store.allow_mmap: false
+      podTemplate:
+        spec:
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms1g -Xmx1g"
+              resources:
+                requests:
+                  memory: 2Gi
+                  cpu: 200m
+                limits:
+                  memory: 2Gi
+                  cpu: "2"
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 5Gi
+            # kind ships local-path-provisioner as the default "standard"
+            # class, so leaving storageClassName unset is correct here.
+
+# One node cannot satisfy a PodDisruptionBudget of maxUnavailable 1 while also
+# being the whole cluster; drop it rather than block every eviction.
+- op: remove
+  path: /spec/podDisruptionBudget

@@ -1,0 +1,53 @@
+apiVersion: kibana.k8s.elastic.co/v1
+kind: Kibana
+metadata:
+  name: sentinel
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+spec:
+  version: 9.5.0
+  count: 1
+
+  # elasticsearchRef is what makes this whole arrangement pleasant: ECK creates
+  # a dedicated service account for Kibana, wires the CA certificate in, and
+  # rotates the credential. No password for Kibana exists anywhere in this
+  # repository or in OCI Vault, because none needs to.
+  elasticsearchRef:
+    name: sentinel
+
+  # The saved-object encryption key comes from OCI Vault through the External
+  # Secrets Operator and is loaded into the Kibana keystore. If Kibana
+  # generates its own, it changes on every restart and every encrypted saved
+  # object — including alerting rules — becomes unreadable.
+  secureSettings:
+    - secretName: sentinel-kibana-keystore
+
+  config:
+    server.publicBaseUrl: https://kibana.sentinel.internal
+    # xpack.encryptedSavedObjects.encryptionKey is deliberately *not* set here.
+    # It is a keystore entry of the same name, delivered by the secret above.
+    # Setting it in both places is an error, and setting it here would put the
+    # key in a ConfigMap.
+
+  http:
+    tls:
+      selfSignedCertificate:
+        subjectAltNames:
+          - dns: sentinel-kb-http.elastic-system.svc
+          - dns: sentinel-kb-http.elastic-system.svc.cluster.local
+
+  podTemplate:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: oke-sentinel
+    spec:
+      containers:
+        - name: kibana
+          resources:
+            requests:
+              memory: 1Gi
+              cpu: 200m
+            limits:
+              memory: 1Gi
+              cpu: "1"

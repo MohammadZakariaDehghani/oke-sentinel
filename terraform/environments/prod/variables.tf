@@ -1,0 +1,116 @@
+variable "tenancy_ocid" {
+  description = "OCID of the tenancy."
+  type        = string
+}
+
+variable "parent_compartment_ocid" {
+  description = "OCID of the compartment this environment's compartment is created under."
+  type        = string
+}
+
+variable "region" {
+  description = "OCI region identifier, for example \"eu-frankfurt-1\"."
+  type        = string
+}
+
+variable "oci_auth_method" {
+  description = "How the provider authenticates: ApiKey, SecurityToken, InstancePrincipal or ResourcePrincipal."
+  type        = string
+  default     = "ApiKey"
+
+  validation {
+    condition     = contains(["ApiKey", "SecurityToken", "InstancePrincipal", "ResourcePrincipal"], var.oci_auth_method)
+    error_message = "oci_auth_method must be one of ApiKey, SecurityToken, InstancePrincipal, ResourcePrincipal."
+  }
+}
+
+variable "oci_config_file_profile" {
+  description = "Profile in ~/.oci/config to read when oci_auth_method is ApiKey or SecurityToken."
+  type        = string
+  default     = "DEFAULT"
+}
+
+variable "name_prefix" {
+  description = "Prefix for every resource name in this environment."
+  type        = string
+  default     = "sentinel-prod"
+}
+
+variable "kubernetes_version" {
+  description = "Kubernetes version for the cluster, for example \"v1.35.2\"."
+  type        = string
+}
+
+variable "tag_namespace" {
+  description = "Defined tag namespace created by the bootstrap stack."
+  type        = string
+  default     = "sentinel"
+}
+
+variable "cost_center" {
+  description = "Value for the CostCenter defined tag."
+  type        = string
+  default     = "platform"
+}
+
+variable "owner" {
+  description = "Value for the Owner defined tag."
+  type        = string
+}
+
+variable "load_balancer_allowed_cidrs" {
+  description = "CIDRs allowed to reach public load balancers on 443."
+  type        = list(string)
+  default     = ["0.0.0.0/0"]
+}
+
+variable "bastion_cidrs" {
+  description = <<-EOT
+    CIDRs inside the VCN allowed to reach the private Kubernetes API endpoint,
+    such as a bastion subnet. The endpoint has no public IP in prod, so this is
+    how operators reach it.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "node_pool_size" {
+  description = "Number of worker nodes. Three keeps an Elasticsearch quorum through a single node failure."
+  type        = number
+  default     = 3
+
+  validation {
+    condition     = var.node_pool_size >= 3
+    error_message = "prod runs at least three nodes so that losing one does not lose Elasticsearch quorum."
+  }
+}
+
+variable "node_shape" {
+  description = "Compute shape for worker nodes."
+  type        = string
+  default     = "VM.Standard.E4.Flex"
+}
+
+variable "node_shape_is_arm" {
+  description = "True when node_shape is an Ampere (aarch64) shape."
+  type        = bool
+  default     = false
+}
+
+variable "node_ocpus" {
+  description = "OCPUs per worker node."
+  type        = number
+  default     = 4
+}
+
+variable "node_memory_gbs" {
+  description = "Memory per worker node in GB."
+  type        = number
+  default     = 64
+}
+
+variable "ssh_public_key" {
+  description = "Optional SSH public key for worker nodes, reachable only through a bastion."
+  type        = string
+  default     = null
+}

@@ -1,0 +1,8 @@
+# Bind both nodeSets to the retaining OCI Block Volume class. Sizes come from
+# the base, which is written for prod.
+- op: add
+  path: /spec/nodeSets/0/volumeClaimTemplates/0/spec/storageClassName
+  value: oci-bv-retain
+- op: add
+  path: /spec/nodeSets/1/volumeClaimTemplates/0/spec/storageClassName
+  value: oci-bv-retain

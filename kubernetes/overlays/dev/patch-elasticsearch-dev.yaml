@@ -1,0 +1,46 @@
+# Smaller than prod in memory, heap and disk. The topology — dedicated masters
+# separate from data nodes — is kept, because that is the part worth proving
+# before it reaches prod.
+- op: replace
+  path: /spec/nodeSets/0/count
+  value: 3
+- op: replace
+  path: /spec/nodeSets/0/podTemplate/spec/containers/0/env/0/value
+  value: "-Xms1g -Xmx1g"
+- op: replace
+  path: /spec/nodeSets/0/podTemplate/spec/containers/0/resources
+  value:
+    requests:
+      memory: 2Gi
+      cpu: 200m
+    limits:
+      memory: 2Gi
+      cpu: "1"
+- op: replace
+  path: /spec/nodeSets/0/volumeClaimTemplates/0/spec/resources/requests/storage
+  value: 10Gi
+- op: add
+  path: /spec/nodeSets/0/volumeClaimTemplates/0/spec/storageClassName
+  value: oci-bv-retain
+
+- op: replace
+  path: /spec/nodeSets/1/count
+  value: 2
+- op: replace
+  path: /spec/nodeSets/1/podTemplate/spec/containers/0/env/0/value
+  value: "-Xms3g -Xmx3g"
+- op: replace
+  path: /spec/nodeSets/1/podTemplate/spec/containers/0/resources
+  value:
+    requests:
+      memory: 6Gi
+      cpu: 500m
+    limits:
+      memory: 6Gi
+      cpu: "2"
+- op: replace
+  path: /spec/nodeSets/1/volumeClaimTemplates/0/spec/resources/requests/storage
+  value: 50Gi
+- op: add
+  path: /spec/nodeSets/1/volumeClaimTemplates/0/spec/storageClassName
+  value: oci-bv-retain

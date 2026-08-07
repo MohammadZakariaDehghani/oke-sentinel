@@ -1,0 +1,148 @@
+# RBAC for the Beats.
+#
+# Both need to read pod, namespace and node metadata to enrich events with
+# Kubernetes context. Metricbeat additionally reads the state_* metricsets,
+# which are cluster-scoped, and needs a lease to elect a single leader so that
+# cluster-level metrics are collected once rather than once per node.
+#
+# Neither gets access to secrets. A log shipper that can read secrets is a
+# credential exfiltration path that runs on every node in the cluster.
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: filebeat
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: metricbeat
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: filebeat
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+rules:
+  - apiGroups: [""]
+    resources:
+      - namespaces
+      - pods
+      - nodes
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["apps"]
+    resources:
+      - replicasets
+    verbs: ["get", "watch", "list"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+    verbs: ["get", "watch", "list"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: metricbeat
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+rules:
+  - apiGroups: [""]
+    resources:
+      - nodes
+      - namespaces
+      - events
+      - pods
+      - services
+      - persistentvolumes
+      - persistentvolumeclaims
+      - resourcequotas
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["apps"]
+    resources:
+      - statefulsets
+      - deployments
+      - replicasets
+      - daemonsets
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["batch"]
+    resources:
+      - jobs
+      - cronjobs
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["storage.k8s.io"]
+    resources:
+      - storageclasses
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources:
+      - nodes/stats
+      - nodes/metrics
+    verbs: ["get"]
+  - nonResourceURLs: ["/metrics"]
+    verbs: ["get"]
+---
+# Leader election for the cluster-scoped metricsets.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: metricbeat-leader-election
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+rules:
+  - apiGroups: ["coordination.k8s.io"]
+    resources: ["leases"]
+    verbs: ["get", "create", "update"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: filebeat
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: filebeat
+subjects:
+  - kind: ServiceAccount
+    name: filebeat
+    namespace: elastic-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: metricbeat
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: metricbeat
+subjects:
+  - kind: ServiceAccount
+    name: metricbeat
+    namespace: elastic-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: metricbeat-leader-election
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: metricbeat-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: metricbeat
+    namespace: elastic-system

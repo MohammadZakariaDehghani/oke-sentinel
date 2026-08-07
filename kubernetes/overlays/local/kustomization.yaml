@@ -1,0 +1,49 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The local overlay: one Elasticsearch node, no OCI, small enough for a laptop
+# or a GitHub Actions runner. This is what the kind integration job deploys, so
+# it is the only overlay in this repository that is exercised end to end on
+# every pull request.
+#
+# Nothing here is a shortcut for its own sake. Every reduction is either a
+# resource the runner does not have, or an OCI dependency that does not exist
+# outside a tenancy.
+
+# No `namespace:` directive. Every resource states its own namespace, and a
+# namespace transformer would rewrite the Namespace objects themselves — all
+# three would collapse into one and kustomize would fail on the ID conflict.
+
+resources:
+  - ../../base
+
+patches:
+  # Collapse the two nodeSets into one all-roles node. A three-master quorum
+  # needs three schedulable nodes; kind gives us one, and a "cluster" of three
+  # masters on one node protects against nothing while using three times the
+  # memory.
+  - path: patch-elasticsearch-single-node.yaml
+    target:
+      kind: Elasticsearch
+      name: sentinel
+
+  - path: patch-kibana-small.yaml
+    target:
+      kind: Kibana
+      name: sentinel
+
+  # No OCI Vault here, so no keystore secret to mount.
+  - path: patch-kibana-no-keystore.yaml
+    target:
+      kind: Kibana
+      name: sentinel
+
+  - path: patch-beats-resources.yaml
+    target:
+      kind: Beat
+      name: filebeat
+
+  - path: patch-beats-resources.yaml
+    target:
+      kind: Beat
+      name: metricbeat

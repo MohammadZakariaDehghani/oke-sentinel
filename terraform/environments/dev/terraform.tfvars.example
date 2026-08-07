@@ -1,0 +1,40 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# Every OCID here is a placeholder with the right shape and no meaning. There
+# are no real tenancy identifiers anywhere in this repository.
+
+tenancy_ocid            = "ocid1.tenancy.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexamp"
+parent_compartment_ocid = "ocid1.tenancy.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexamp"
+region                  = "eu-frankfurt-1"
+
+# ApiKey reads ~/.oci/config, so no fingerprint or private key path is ever
+# committed. Use "SecurityToken" with `oci session authenticate` if you prefer
+# short-lived credentials.
+oci_auth_method         = "ApiKey"
+oci_config_file_profile = "DEFAULT"
+
+name_prefix        = "sentinel-dev"
+kubernetes_version = "v1.35.2"
+
+# Defined tags. The namespace and keys come from the bootstrap stack.
+tag_namespace = "sentinel"
+cost_center   = "platform"
+owner         = "platform-team"
+
+# Your own egress address. Leaving this empty means the API endpoint is only
+# reachable from inside the VCN, which is safe but means you cannot run
+# kubectl from your laptop.
+api_endpoint_allowed_cidrs = ["203.0.113.10/32"]
+
+# A public demo endpoint is genuinely public. Narrow this if you would rather
+# it were not.
+load_balancer_allowed_cidrs = ["0.0.0.0/0"]
+
+# Two nodes at 24 GB each. See the sizing table in the root README before
+# reducing this — Elasticsearch is the constraint, not Kubernetes.
+node_pool_size  = 2
+node_shape      = "VM.Standard.E4.Flex"
+node_ocpus      = 2
+node_memory_gbs = 24
+
+# ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialNotReal you@example.com"

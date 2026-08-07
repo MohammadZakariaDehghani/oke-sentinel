@@ -1,0 +1,293 @@
+# Index lifecycle policies and index templates.
+#
+# Retention is a decision, and this is where it is written down. Without an ILM
+# policy an Elasticsearch cluster grows until the disks fill and the cluster
+# goes read-only, which is a bad way to discover you never chose a retention
+# period.
+#
+# Three classes of data with genuinely different lifetimes:
+#
+#   kubernetes.audit      Who did what to the cluster. This is the evidence the
+#                         detection rules run against and the thing an incident
+#                         review needs months later. Kept 1 year.
+#   kubernetes.container  Application logs. Useful for about a week, voluminous,
+#                         and reproducible by rerunning the workload. Kept 30 days.
+#   oci.inventory         Governance findings, one document per resource per
+#                         scan. Small, and only the trend matters. Kept 180 days.
+#
+# See docs/decisions/0004-ilm-retention-tiers.md for the reasoning.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: sentinel-ilm
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+data:
+  ilm-kubernetes-audit.json: |
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "50gb",
+                "max_age": "7d"
+              },
+              "set_priority": { "priority": 100 }
+            }
+          },
+          "warm": {
+            "min_age": "7d",
+            "actions": {
+              "forcemerge": { "max_num_segments": 1 },
+              "shrink": { "number_of_shards": 1 },
+              "set_priority": { "priority": 50 }
+            }
+          },
+          "delete": {
+            "min_age": "365d",
+            "actions": { "delete": {} }
+          }
+        }
+      }
+    }
+
+  ilm-kubernetes-container.json: |
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "20gb",
+                "max_age": "1d"
+              },
+              "set_priority": { "priority": 100 }
+            }
+          },
+          "warm": {
+            "min_age": "2d",
+            "actions": {
+              "forcemerge": { "max_num_segments": 1 },
+              "set_priority": { "priority": 50 }
+            }
+          },
+          "delete": {
+            "min_age": "30d",
+            "actions": { "delete": {} }
+          }
+        }
+      }
+    }
+
+  ilm-oci-inventory.json: |
+    {
+      "policy": {
+        "phases": {
+          "hot": {
+            "actions": {
+              "rollover": {
+                "max_primary_shard_size": "5gb",
+                "max_age": "30d"
+              },
+              "set_priority": { "priority": 100 }
+            }
+          },
+          "warm": {
+            "min_age": "30d",
+            "actions": {
+              "forcemerge": { "max_num_segments": 1 },
+              "set_priority": { "priority": 50 }
+            }
+          },
+          "delete": {
+            "min_age": "180d",
+            "actions": { "delete": {} }
+          }
+        }
+      }
+    }
+
+  # Index templates. These bind the policies above to the data streams the
+  # Beats and the CLI write to, and pin the field mappings the detection rules
+  # depend on. `user.name` and `kubernetes.namespace` being keyword rather than
+  # text is not cosmetic — a text field cannot be aggregated on, and every
+  # detection rule here aggregates.
+  template-kubernetes-audit.json: |
+    {
+      "index_patterns": ["logs-kubernetes.audit-*"],
+      "data_stream": {},
+      "priority": 500,
+      "template": {
+        "settings": {
+          "index.lifecycle.name": "sentinel-kubernetes-audit",
+          "index.number_of_shards": 1,
+          "index.number_of_replicas": 1,
+          "index.refresh_interval": "10s"
+        },
+        "mappings": {
+          "properties": {
+            "@timestamp":            { "type": "date" },
+            "verb":                  { "type": "keyword" },
+            "stage":                 { "type": "keyword" },
+            "requestURI":            { "type": "keyword", "ignore_above": 1024 },
+            "userAgent":             { "type": "keyword", "ignore_above": 512 },
+            "user": {
+              "properties": {
+                "username": { "type": "keyword" },
+                "groups":   { "type": "keyword" },
+                "uid":      { "type": "keyword" }
+              }
+            },
+            "sourceIPs":             { "type": "ip" },
+            "objectRef": {
+              "properties": {
+                "resource":    { "type": "keyword" },
+                "subresource": { "type": "keyword" },
+                "namespace":   { "type": "keyword" },
+                "name":        { "type": "keyword" },
+                "apiGroup":    { "type": "keyword" },
+                "apiVersion":  { "type": "keyword" }
+              }
+            },
+            "responseStatus": {
+              "properties": {
+                "code":   { "type": "integer" },
+                "status": { "type": "keyword" },
+                "reason": { "type": "keyword" }
+              }
+            },
+            "annotations": {
+              "properties": {
+                "authorization.k8s.io/decision": { "type": "keyword" },
+                "authorization.k8s.io/reason":   { "type": "keyword", "ignore_above": 1024 }
+              }
+            },
+            "requestObject": {
+              "dynamic": false,
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "hostNetwork":        { "type": "boolean" },
+                    "hostPID":            { "type": "boolean" },
+                    "hostIPC":            { "type": "boolean" },
+                    "serviceAccountName": { "type": "keyword" },
+                    "nodeName":           { "type": "keyword" },
+                    "containers": {
+                      "properties": {
+                        "name":  { "type": "keyword" },
+                        "image": { "type": "keyword" },
+                        "securityContext": {
+                          "properties": {
+                            "privileged":               { "type": "boolean" },
+                            "allowPrivilegeEscalation": { "type": "boolean" },
+                            "runAsUser":                { "type": "long" },
+                            "runAsNonRoot":             { "type": "boolean" },
+                            "capabilities": {
+                              "properties": { "add": { "type": "keyword" } }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "volumes": {
+                      "properties": {
+                        "name": { "type": "keyword" },
+                        "hostPath": {
+                          "properties": { "path": { "type": "keyword" } }
+                        }
+                      }
+                    }
+                  }
+                },
+                "roleRef": {
+                  "properties": {
+                    "kind":     { "type": "keyword" },
+                    "name":     { "type": "keyword" },
+                    "apiGroup": { "type": "keyword" }
+                  }
+                },
+                "subjects": {
+                  "properties": {
+                    "kind":      { "type": "keyword" },
+                    "name":      { "type": "keyword" },
+                    "namespace": { "type": "keyword" }
+                  }
+                },
+                "rules": {
+                  "properties": {
+                    "apiGroups": { "type": "keyword" },
+                    "resources": { "type": "keyword" },
+                    "verbs":     { "type": "keyword" }
+                  }
+                },
+                "type": { "type": "keyword" }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  template-kubernetes-container.json: |
+    {
+      "index_patterns": ["logs-kubernetes.container-*"],
+      "data_stream": {},
+      "priority": 500,
+      "template": {
+        "settings": {
+          "index.lifecycle.name": "sentinel-kubernetes-container",
+          "index.number_of_shards": 1,
+          "index.number_of_replicas": 1,
+          "index.refresh_interval": "30s"
+        },
+        "mappings": {
+          "properties": {
+            "@timestamp": { "type": "date" },
+            "message":    { "type": "text" },
+            "level":      { "type": "keyword" },
+            "logger":     { "type": "keyword" },
+            "request_id": { "type": "keyword" },
+            "kubernetes": {
+              "properties": {
+                "namespace":      { "type": "keyword" },
+                "pod":            { "properties": { "name": { "type": "keyword" }, "uid": { "type": "keyword" } } },
+                "container":      { "properties": { "name": { "type": "keyword" } } },
+                "node":           { "properties": { "name": { "type": "keyword" } } },
+                "labels":         { "type": "object", "dynamic": true }
+              }
+            }
+          }
+        }
+      }
+    }
+
+  template-oci-inventory.json: |
+    {
+      "index_patterns": ["oci-inventory-*"],
+      "data_stream": {},
+      "priority": 500,
+      "template": {
+        "settings": {
+          "index.lifecycle.name": "sentinel-oci-inventory",
+          "index.number_of_shards": 1,
+          "index.number_of_replicas": 1
+        },
+        "mappings": {
+          "properties": {
+            "@timestamp":       { "type": "date" },
+            "scan_id":          { "type": "keyword" },
+            "finding_type":     { "type": "keyword" },
+            "severity":         { "type": "keyword" },
+            "resource_id":      { "type": "keyword" },
+            "resource_type":    { "type": "keyword" },
+            "resource_name":    { "type": "keyword" },
+            "compartment_id":   { "type": "keyword" },
+            "region":           { "type": "keyword" },
+            "estimated_monthly_cost_usd": { "type": "float" },
+            "detail":           { "type": "text" }
+          }
+        }
+      }
+    }

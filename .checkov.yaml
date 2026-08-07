@@ -1,0 +1,30 @@
+# Checkov configuration for the Terraform in this repository.
+#
+# Skips here are policy-level disagreements that apply repository-wide. Skips
+# that apply to one reviewed resource are inline `#checkov:skip=` comments
+# instead, so that a future resource of the same shape is still flagged.
+framework:
+  - terraform
+
+quiet: true
+compact: true
+
+# Do not call out to the Prisma Cloud guidelines API. Findings are identical
+# without it and the run stays hermetic.
+skip-download: true
+
+# There is deliberately no `directory` key here. Passing checkov more than one
+# directory in a single invocation does not scan them all — the second and
+# later directories are reported cumulatively against the first, and their
+# findings never appear. `make tf-checkov` invokes checkov once per stack
+# instead. Modules are scanned through the stacks that call them, which is
+# where the real variable values are bound.
+
+skip-check:
+  # CKV_OCI_21 wants NSG ingress rules to be stateless. OKE requires stateful
+  # rules: the control plane, kubelet and NodePort traffic all rely on
+  # connection tracking to allow return traffic, and Oracle's own reference
+  # rule set for OKE is stateful throughout. Making these rules stateless would
+  # require hand-writing the reverse of every rule and would still break
+  # ephemeral-port return paths.
+  - CKV_OCI_21

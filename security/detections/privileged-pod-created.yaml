@@ -1,0 +1,197 @@
+id: privileged-pod-created
+name: Pod created with host access or privileged containers
+severity: critical
+enabled: true
+type: query
+
+index: logs-kubernetes.audit-*
+interval: 5m
+lookback: 5m
+
+description: >-
+  A pod was created that either runs a privileged container, shares a host
+  namespace, or mounts a path from the node filesystem.
+
+rationale: >-
+  Each of these is a documented container escape. A privileged container has
+  all capabilities and can load kernel modules. hostPID lets a process see and
+  signal every process on the node, including other tenants' containers.
+  hostNetwork puts the pod on the node's network stack, past every
+  NetworkPolicy. A hostPath mount of / or /var/run/docker.sock is a direct path
+  to the node's filesystem or container runtime.
+
+  The realistic attack is not someone creating an obviously malicious pod. It
+  is a workload that quietly acquires one of these properties in a routine
+  manifest change, and stays that way. Pod Security Admission blocks most of it
+  in the namespaces that enforce "restricted" — this rule catches what happens
+  in the namespaces that do not, and catches the case where someone relaxes the
+  namespace label first.
+
+  The audit policy records pod creation at Request level specifically so the
+  securityContext and volumes are in the event. At Metadata level this rule
+  would be impossible.
+
+mitre:
+  - tactic: Privilege Escalation
+    tactic_id: TA0004
+    technique: Escape to Host
+    technique_id: T1611
+  - tactic: Execution
+    tactic_id: TA0002
+    technique: Deploy Container
+    technique_id: T1610
+
+false_positives:
+  - CNI, CSI and monitoring agents legitimately need host access. They are
+    DaemonSets in kube-system and elastic-system, created by controllers rather
+    than people, and are excluded by namespace below.
+  - A node problem detector or a debug pod started with `kubectl debug
+    --profile=sysadmin`.
+
+response:
+  - Look at which of the should clauses matched — hostPath to
+    /var/run/docker.sock is a different conversation from hostNetwork on a
+    monitoring agent.
+  - Check whether the creating identity normally creates workloads at all.
+  - Check the pod's image against what the registry says should be running.
+
+query:
+  bool:
+    filter:
+      - term:
+          stage: ResponseComplete
+      - term:
+          verb: create
+      - term:
+          objectRef.resource: pods
+      - range:
+          responseStatus.code:
+            lt: 400
+    minimum_should_match: 1
+    should:
+      - term:
+          requestObject.spec.hostNetwork: true
+      - term:
+          requestObject.spec.hostPID: true
+      - term:
+          requestObject.spec.hostIPC: true
+      - term:
+          requestObject.spec.containers.securityContext.privileged: true
+      - exists:
+          field: requestObject.spec.volumes.hostPath.path
+    must_not:
+      # System namespaces whose agents need host access by design. This is a
+      # real blind spot: an attacker who can create pods in kube-system does
+      # not need this rule's help. Pod creation in kube-system by a
+      # non-controller identity is worth its own rule.
+      - terms:
+          objectRef.namespace:
+            - kube-system
+            - elastic-system
+
+fixtures:
+  match:
+    - description: A privileged container in an application namespace
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: bob@example.com
+        objectRef:
+          resource: pods
+          namespace: sample-app
+          name: debug-shell
+        responseStatus:
+          code: 201
+        requestObject:
+          spec:
+            containers:
+              - name: shell
+                image: alpine:3.20
+                securityContext:
+                  privileged: true
+
+    - description: A pod mounting the host root filesystem
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:default:builder
+        objectRef:
+          resource: pods
+          namespace: default
+          name: host-mounter
+        responseStatus:
+          code: 201
+        requestObject:
+          spec:
+            containers:
+              - name: app
+                image: busybox:1.36
+            volumes:
+              - name: hostroot
+                hostPath:
+                  path: /
+
+    - description: A pod sharing the host PID namespace
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: bob@example.com
+        objectRef:
+          resource: pods
+          namespace: sample-app
+          name: pid-snooper
+        responseStatus:
+          code: 201
+        requestObject:
+          spec:
+            hostPID: true
+            containers:
+              - name: app
+                image: busybox:1.36
+
+  no_match:
+    - description: An ordinary unprivileged pod
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:kube-system:replicaset-controller
+        objectRef:
+          resource: pods
+          namespace: sample-app
+          name: sample-api-7d9f
+        responseStatus:
+          code: 201
+        requestObject:
+          spec:
+            containers:
+              - name: sample-api
+                image: sample-api:1.0.0
+                securityContext:
+                  privileged: false
+                  allowPrivilegeEscalation: false
+                  runAsNonRoot: true
+
+    - description: A privileged agent in kube-system, which is expected
+      event:
+        stage: ResponseComplete
+        verb: create
+        user:
+          username: system:serviceaccount:kube-system:daemon-set-controller
+        objectRef:
+          resource: pods
+          namespace: kube-system
+          name: csi-node-abcde
+        responseStatus:
+          code: 201
+        requestObject:
+          spec:
+            hostNetwork: true
+            containers:
+              - name: csi
+                image: csi-node:1.0.0
+                securityContext:
+                  privileged: true

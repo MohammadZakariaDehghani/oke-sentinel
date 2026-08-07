@@ -1,0 +1,34 @@
+# OCI Block Volume storage for Elasticsearch data.
+#
+# Not the cluster default class, deliberately — Elasticsearch wants different
+# behaviour from everything else, and a shared default is how you end up
+# discovering that your data volumes were deleted with the StatefulSet.
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: oci-bv-retain
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+provisioner: blockvolume.csi.oraclecloud.com
+
+# Retain, not Delete. Deleting an Elasticsearch PVC should not be the same
+# action as destroying the shard data on it. The volume is left behind for a
+# human to look at and remove on purpose.
+reclaimPolicy: Retain
+
+# Provision the volume in the availability domain where the pod was actually
+# scheduled. With Immediate binding the volume is created first and the pod is
+# then forced into that AD, which fights topology spread constraints.
+volumeBindingMode: WaitForFirstConsumer
+
+# Elasticsearch data volumes fill up. Expansion without recreating the
+# StatefulSet is the difference between a resize and an outage.
+allowVolumeExpansion: true
+
+parameters:
+  # 10 VPUs per GB is OCI's "balanced" performance tier. 0 is the low-cost
+  # tier and is too slow for a Lucene merge; 20+ is the high-performance tier
+  # and costs accordingly.
+  vpusPerGB: "10"
+  attachment-type: paravirtualized
+  csi.storage.k8s.io/fstype: ext4

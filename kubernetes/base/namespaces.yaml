@@ -1,0 +1,39 @@
+# Pod Security Admission replaces PodSecurityPolicy, which was removed in
+# Kubernetes 1.25. Each namespace declares the standard it enforces.
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+    # Elasticsearch cannot run under "restricted": the container needs to keep
+    # its own filesystem group ownership on the data volume, and the official
+    # image does not set seccompProfile. It does run as a non-root user with no
+    # added capabilities, which "baseline" enforces. Auditing against
+    # "restricted" makes the remaining gap visible rather than forgotten.
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: external-secrets
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+    pod-security.kubernetes.io/enforce: baseline
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: sample-app
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+    # Nothing here has an excuse. The sample workload is the one thing in this
+    # repository written from scratch, so it meets the strictest standard.
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted

@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The base is what every environment shares. The OCI Block Volume StorageClass
+# in storage/ is deliberately not here: it is meaningless on kind and would
+# fail to provision, so only the dev and prod overlays pull it in.
+resources:
+  - namespaces.yaml
+  - elasticsearch/elasticsearch.yaml
+  - kibana/kibana.yaml
+
+labels:
+  - includeSelectors: false
+    pairs:
+      app.kubernetes.io/managed-by: kustomize

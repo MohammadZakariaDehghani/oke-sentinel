@@ -1,0 +1,15 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Development on OKE. Real OCI Block Volume storage, but sized for two worker
+# nodes rather than three.
+
+resources:
+  - ../../base
+  - ../../base/storage
+
+patches:
+  - path: patch-elasticsearch-dev.yaml
+    target:
+      kind: Elasticsearch
+      name: sentinel

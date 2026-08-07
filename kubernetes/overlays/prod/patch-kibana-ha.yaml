@@ -1,0 +1,6 @@
+# Two Kibana replicas so a node drain does not take the only way of reading the
+# security dashboard offline. Kibana is stateless; the saved objects live in
+# Elasticsearch.
+- op: replace
+  path: /spec/count
+  value: 2

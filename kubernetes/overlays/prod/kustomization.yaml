@@ -1,0 +1,20 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# Production on OKE. The base is already sized for this, so the overlay's job
+# is to add block volume storage and bind the data volumes to it.
+
+resources:
+  - ../../base
+  - ../../base/storage
+
+patches:
+  - path: patch-elasticsearch-storage.yaml
+    target:
+      kind: Elasticsearch
+      name: sentinel
+
+  - path: patch-kibana-ha.yaml
+    target:
+      kind: Kibana
+      name: sentinel

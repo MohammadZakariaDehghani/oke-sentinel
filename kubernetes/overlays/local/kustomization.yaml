@@ -1,0 +1,33 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+# The local overlay: one Elasticsearch node, no OCI, small enough for a laptop
+# or a GitHub Actions runner.
+#
+# No `namespace:` directive. Every resource states its own namespace, and a
+# namespace transformer would rewrite the Namespace objects themselves — all
+# three would collapse into one and kustomize would fail on the ID conflict.
+
+resources:
+  - ../../base
+
+patches:
+  # Collapse the two nodeSets into one all-roles node. A three-master quorum
+  # needs three schedulable nodes; kind gives us one, and a "cluster" of three
+  # masters on one node protects against nothing while using three times the
+  # memory.
+  - path: patch-elasticsearch-single-node.yaml
+    target:
+      kind: Elasticsearch
+      name: sentinel
+
+  - path: patch-kibana-small.yaml
+    target:
+      kind: Kibana
+      name: sentinel
+
+  # No OCI Vault here, so no keystore secret to mount.
+  - path: patch-kibana-no-keystore.yaml
+    target:
+      kind: Kibana
+      name: sentinel

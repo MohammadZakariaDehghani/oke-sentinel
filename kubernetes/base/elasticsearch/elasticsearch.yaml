@@ -1,0 +1,146 @@
+apiVersion: elasticsearch.k8s.elastic.co/v1
+kind: Elasticsearch
+metadata:
+  name: sentinel
+  namespace: elastic-system
+  labels:
+    app.kubernetes.io/part-of: oke-sentinel
+spec:
+  version: 9.5.0
+
+  # TLS is on by default in ECK, on both the HTTP and transport layers, with a
+  # self-signed CA the operator rotates. This block is here to name the SANs,
+  # not to switch anything on — and specifically not to switch anything off.
+  # `selfSignedCertificate.disabled: true` shows up in a lot of tutorials; it
+  # means plaintext Elasticsearch.
+  http:
+    tls:
+      selfSignedCertificate:
+        subjectAltNames:
+          - dns: sentinel-es-http.elastic-system.svc
+          - dns: sentinel-es-http.elastic-system.svc.cluster.local
+
+  # Dedicated master nodes. Three of them, so the cluster keeps a quorum
+  # through the loss of one, and they hold no data so a data-node problem
+  # cannot take the cluster's ability to elect a master with it.
+  nodeSets:
+    - name: master
+      count: 3
+      config:
+        node.roles: ["master"]
+        # Memory-mapped I/O needs vm.max_map_count raised on the host, which
+        # needs a privileged init container. Master nodes hold no shards, so
+        # the performance argument does not apply to them.
+        node.store.allow_mmap: false
+      podTemplate:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: oke-sentinel
+        spec:
+          # Spread masters across nodes and, where the topology allows, across
+          # availability domains. A three-master quorum on one worker node is
+          # not a quorum.
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: DoNotSchedule
+              labelSelector:
+                matchLabels:
+                  elasticsearch.k8s.elastic.co/cluster-name: sentinel
+                  elasticsearch.k8s.elastic.co/node-master: "true"
+          containers:
+            - name: elasticsearch
+              env:
+                # Heap at half of the container limit. The other half is for
+                # the JVM's own off-heap use and the page cache, which is where
+                # Lucene actually gets its speed.
+                - name: ES_JAVA_OPTS
+                  value: "-Xms2g -Xmx2g"
+              resources:
+                requests:
+                  memory: 4Gi
+                  cpu: 500m
+                limits:
+                  # Memory request and limit are equal on purpose. An
+                  # Elasticsearch node that gets OOM-killed mid-write is worse
+                  # than one that is throttled.
+                  memory: 4Gi
+                  cpu: "2"
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 20Gi
+
+    # Data and ingest nodes. These do the indexing, hold the shards, and run
+    # the ingest pipelines that parse audit events.
+    - name: data
+      count: 3
+      config:
+        node.roles: ["data", "ingest", "transform"]
+        node.store.allow_mmap: false
+      podTemplate:
+        metadata:
+          labels:
+            app.kubernetes.io/part-of: oke-sentinel
+        spec:
+          topologySpreadConstraints:
+            - maxSkew: 1
+              topologyKey: kubernetes.io/hostname
+              whenUnsatisfiable: ScheduleAnyway
+              labelSelector:
+                matchLabels:
+                  elasticsearch.k8s.elastic.co/cluster-name: sentinel
+                  elasticsearch.k8s.elastic.co/node-data: "true"
+          containers:
+            - name: elasticsearch
+              env:
+                - name: ES_JAVA_OPTS
+                  value: "-Xms4g -Xmx4g"
+              resources:
+                requests:
+                  memory: 8Gi
+                  cpu: "1"
+                limits:
+                  memory: 8Gi
+                  cpu: "4"
+      volumeClaimTemplates:
+        - metadata:
+            name: elasticsearch-data
+          spec:
+            accessModes:
+              - ReadWriteOnce
+            resources:
+              requests:
+                storage: 200Gi
+
+  # ECK creates a default PodDisruptionBudget allowing one unavailable pod, but
+  # only while the cluster is green. Declaring it makes the guarantee explicit
+  # and reviewable rather than an operator default that could change.
+  podDisruptionBudget:
+    metadata:
+      name: sentinel-es-pdb
+      labels:
+        app.kubernetes.io/part-of: oke-sentinel
+    spec:
+      maxUnavailable: 1
+      selector:
+        matchLabels:
+          elasticsearch.k8s.elastic.co/cluster-name: sentinel
+
+  # No `auth.fileRealm` here on purpose.
+  #
+  # The file realm wants a secret containing bcrypt hashes, and the password
+  # this project uses lives in OCI Vault as plaintext. Producing the hash would
+  # mean either trusting a template function in the External Secrets Operator
+  # to bcrypt it, or calling Terraform's bcrypt(), which re-salts on every
+  # apply and so never converges.
+  #
+  # Instead the native realm user is created by the bootstrap Job in
+  # kubernetes/base/ilm/, which reads the Vault-sourced password from a secret
+  # and PUTs it to the security API. That is an idempotent HTTP call with no
+  # hidden machinery in it.

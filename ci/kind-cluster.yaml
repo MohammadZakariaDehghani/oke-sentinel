@@ -1,0 +1,69 @@
+# kind cluster for the local and CI path.
+#
+# The reason this file exists at all is the audit log. kind gives us a control
+# plane we own, so `security/audit-policy.yaml` can actually be installed and
+# the API server can be told to write audit events to a file that Filebeat
+# tails. That is what makes the detection pipeline testable end to end on a
+# laptop and on a CI runner, without an OCI tenancy.
+#
+# A single node, because Elasticsearch here runs as one all-roles node (see
+# kubernetes/overlays/local) and extra kind nodes cost memory without buying
+# anything the tests check.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+name: oke-sentinel
+
+nodes:
+  - role: control-plane
+
+    # The audit policy is mounted in from the repository. The path on the host
+    # side is relative to the directory kind is invoked from, which is why
+    # ci/scripts/install-local-stack.sh runs kind from the repository root.
+    extraMounts:
+      - hostPath: ./security/audit-policy.yaml
+        containerPath: /etc/kubernetes/audit/audit-policy.yaml
+        readOnly: true
+
+    kubeadmConfigPatches:
+      # NOTE ON FORMAT: this uses kubeadm's v1beta4 API, where `extraArgs` is a
+      # list of {name, value} pairs. Every older example on the internet uses
+      # v1beta3, where it is a plain map:
+      #
+      #     extraArgs:
+      #       audit-policy-file: /etc/kubernetes/audit/audit-policy.yaml
+      #
+      # kubeadm switched in Kubernetes 1.31. Using the map form against a
+      # v1beta4 cluster fails with a confusing unmarshalling error during
+      # `kind create cluster`, and using the list form against an older node
+      # image fails the same way in reverse. If you pin KIND_NODE_IMAGE to
+      # something older than 1.31, this block needs the map form.
+      - |
+        kind: ClusterConfiguration
+        apiServer:
+          extraArgs:
+            - name: audit-policy-file
+              value: /etc/kubernetes/audit/audit-policy.yaml
+            - name: audit-log-path
+              value: /var/log/kubernetes/audit/audit.log
+            # Keep the audit log small. It is read continuously by Filebeat and
+            # the cluster is thrown away at the end of the run, so there is no
+            # reason to retain rotations.
+            - name: audit-log-maxage
+              value: "1"
+            - name: audit-log-maxbackup
+              value: "1"
+            - name: audit-log-maxsize
+              value: "50"
+          extraVolumes:
+            - name: audit-policy
+              hostPath: /etc/kubernetes/audit/audit-policy.yaml
+              mountPath: /etc/kubernetes/audit/audit-policy.yaml
+              readOnly: true
+              pathType: File
+            # DirectoryOrCreate: the API server starts before anything has
+            # created this path.
+            - name: audit-log
+              hostPath: /var/log/kubernetes/audit
+              mountPath: /var/log/kubernetes/audit
+              readOnly: false
+              pathType: DirectoryOrCreate

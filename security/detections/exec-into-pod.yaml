@@ -1,0 +1,155 @@
+id: exec-into-pod
+name: Exec or attach into a running pod
+severity: high
+enabled: true
+type: query
+
+index: logs-kubernetes.audit-*
+interval: 5m
+lookback: 5m
+
+description: >-
+  Someone opened an interactive session inside a running container using
+  kubectl exec, kubectl attach, or the equivalent API call.
+
+rationale: >-
+  In a cluster deployed from Git, nobody needs a shell in a running container.
+  Every legitimate change arrives as a new image or a new manifest. An exec is
+  therefore either an operator debugging something urgent — which should be
+  visible and explainable — or someone using a container as a foothold. It is
+  also one of the few actions that leaves no trace in the container's own logs
+  and no trace in the deployment history, which is exactly why it is worth
+  logging at the API server.
+
+  The audit policy records this at RequestResponse level so the command itself
+  is captured, not just the fact that a session happened.
+
+mitre:
+  - tactic: Execution
+    tactic_id: TA0002
+    technique: Container Administration Command
+    technique_id: T1609
+  - tactic: Lateral Movement
+    tactic_id: TA0008
+    technique: Remote Services
+    technique_id: T1021
+
+false_positives:
+  - Operators debugging an incident. Expected, and the point is that it is
+    visible — not that it is forbidden.
+  - Some operators (databases in particular) exec into their own pods to run
+    backups or failover. Add the operator's service account to the allowlist in
+    the must_not clause rather than switching the rule off.
+
+response:
+  - Identify the human behind user.username. A service account here is more
+    suspicious than a person.
+  - Read the captured command from requestURI, which carries the exec
+    arguments as query parameters.
+  - Check what else that identity did in the surrounding minutes.
+
+query:
+  bool:
+    filter:
+      - term:
+          stage: ResponseComplete
+      - term:
+          verb: create
+      - term:
+          objectRef.resource: pods
+      - terms:
+          objectRef.subresource:
+            - exec
+            - attach
+      # Below 400 means the session actually opened. An exec that was denied is
+      # a different signal and is caught by rbac-denied-burst.
+      - range:
+          responseStatus.code:
+            lt: 400
+    must_not:
+      # Allowlist. Keep this short and justify every entry — each one is a
+      # blind spot.
+      - terms:
+          user.username:
+            - system:serviceaccount:elastic-system:elastic-operator
+
+fixtures:
+  match:
+    - description: A human execs a shell into a running pod
+      event:
+        stage: ResponseComplete
+        verb: create
+        requestURI: /api/v1/namespaces/sample-app/pods/sample-api-7d9f/exec?command=%2Fbin%2Fsh&stdin=true&tty=true
+        user:
+          username: alice@example.com
+          groups: ["system:authenticated"]
+        sourceIPs: ["10.20.2.31"]
+        objectRef:
+          resource: pods
+          subresource: exec
+          namespace: sample-app
+          name: sample-api-7d9f
+        responseStatus:
+          code: 101
+
+    - description: A service account attaches to a container
+      event:
+        stage: ResponseComplete
+        verb: create
+        requestURI: /api/v1/namespaces/sample-app/pods/sample-api-7d9f/attach
+        user:
+          username: system:serviceaccount:default:ci-runner
+        sourceIPs: ["10.20.64.9"]
+        objectRef:
+          resource: pods
+          subresource: attach
+          namespace: sample-app
+          name: sample-api-7d9f
+        responseStatus:
+          code: 101
+
+  no_match:
+    - description: Reading pod logs is not an interactive session
+      event:
+        stage: ResponseComplete
+        verb: get
+        requestURI: /api/v1/namespaces/sample-app/pods/sample-api-7d9f/log
+        user:
+          username: alice@example.com
+        objectRef:
+          resource: pods
+          subresource: log
+          namespace: sample-app
+          name: sample-api-7d9f
+        responseStatus:
+          code: 200
+
+    - description: A denied exec attempt belongs to the RBAC probing rule
+      event:
+        stage: ResponseComplete
+        verb: create
+        requestURI: /api/v1/namespaces/sample-app/pods/sample-api-7d9f/exec?command=%2Fbin%2Fsh
+        user:
+          username: system:serviceaccount:sample-app:sample-api
+        objectRef:
+          resource: pods
+          subresource: exec
+          namespace: sample-app
+          name: sample-api-7d9f
+        responseStatus:
+          code: 403
+
+    - description: The allowlisted operator managing its own workload
+      event:
+        stage: ResponseComplete
+        verb: create
+        requestURI: /api/v1/namespaces/elastic-system/pods/sentinel-es-all-0/exec
+        user:
+          username: system:serviceaccount:elastic-system:elastic-operator
+        objectRef:
+          resource: pods
+          subresource: exec
+          namespace: elastic-system
+          name: sentinel-es-all-0
+        responseStatus:
+          code: 101

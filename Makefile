@@ -26,6 +26,7 @@ setup: ## Install Python projects (editable, with dev extras) and git hooks
 		echo "==> installing $$p"; \
 		uv pip install --python $$(command -v python3) -e "$$p[dev]" || exit 1; \
 	done
+	uv pip install --python $$(command -v python3) -r security/tests/requirements.txt
 	@command -v pre-commit >/dev/null 2>&1 && pre-commit install || \
 		echo "pre-commit not installed; skipping hook install"
 
@@ -50,7 +51,7 @@ fmt: py-fmt tf-fmt ## Format everything in place
 lint: py-lint py-type tf-fmt-check tf-lint tf-checkov ## Run every static check
 
 .PHONY: test
-test: py-test ## Run the unit tests
+test: py-test detections-test ## Run the unit tests
 
 # ---------------------------------------------------------------------------
 # Python
@@ -77,7 +78,7 @@ py-type: ## mypy for each Python project
 py-test: ## pytest for each Python project
 	@for p in $(PY_PROJECTS); do \
 		echo "==> pytest $$p"; \
-		( cd "$$p" && pytest -q ) || exit 1; \
+		( cd "$$p" && python3 -m pytest -q ) || exit 1; \
 	done
 
 # ---------------------------------------------------------------------------
@@ -154,10 +155,18 @@ local-verify: ## Assert that container logs are reaching Elasticsearch
 # Security
 # ---------------------------------------------------------------------------
 
+.PHONY: detections-test
+detections-test: ## Structural tests for the detection rules (no Elasticsearch needed)
+	python3 -m pytest security/tests/test_rule_definitions.py -q
+
+.PHONY: detections-test-integration
+detections-test-integration: ## Run every detection rule against a live Elasticsearch
+	@test -n "$$ES_URL" || { echo "set ES_URL (and ES_PASSWORD) first"; exit 1; }
+	python3 -m pytest security/tests -q
+
 .PHONY: secrets-scan
-secrets-scan: ## Re-run detect-secrets against the tracked files
-	detect-secrets scan --baseline .secrets.baseline
-	detect-secrets audit --report --fail-on-unaudited .secrets.baseline
+secrets-scan: ## Re-run detect-secrets and fail on anything unreviewed
+	./ci/scripts/secrets-scan.sh
 
 # ---------------------------------------------------------------------------
 # Housekeeping

@@ -1,0 +1,136 @@
+id: rbac-denied-burst
+name: Repeated authorisation failures from a single identity
+severity: medium
+enabled: true
+type: threshold
+
+index: logs-kubernetes.audit-*
+interval: 5m
+lookback: 10m
+
+threshold:
+  field: user.username
+  value: 10
+
+description: >-
+  One identity was denied by RBAC more than ten times in ten minutes.
+
+rationale: >-
+  A working client does not get denied. Its permissions were set when it was
+  deployed and they either cover what it does or the deployment failed
+  immediately and loudly. So a *burst* of denials from one identity means
+  something is asking questions it does not know the answer to — which is what
+  permission enumeration looks like from the API server's side.
+
+  This is the rule that catches the reconnaissance step, before the escalation
+  the other rules detect. An attacker who has landed in a pod and is working
+  out what its service account can reach will generate exactly this pattern:
+  many different resources, mostly denied, from one identity, in a short
+  window. Tools like kubectl-who-can and the access enumeration built into most
+  Kubernetes attack frameworks all produce it.
+
+  It is a threshold rule rather than a match rule because a single 403 is
+  meaningless — a controller racing a CRD installation produces those all day.
+  The signal is entirely in the rate.
+
+  Ten in ten minutes is a starting point, not a tuned value. Watch what your
+  own cluster produces for a week before trusting it; see the note on tuning
+  in docs/detections.md.
+
+mitre:
+  - tactic: Discovery
+    tactic_id: TA0007
+    technique: Permission Groups Discovery
+    technique_id: T1069
+  - tactic: Discovery
+    tactic_id: TA0007
+    technique: Cloud Infrastructure Discovery
+    technique_id: T1580
+
+false_positives:
+  - An operator installed before its CRDs exist will retry and be denied in a
+    tight loop. This looks identical to enumeration and is the single most
+    common false positive.
+  - A misconfigured client after a Role was narrowed. Real, and worth knowing
+    about anyway.
+  - Monitoring agents probing for optional APIs that are not installed.
+
+response:
+  - Look at the spread of objectRef.resource values. A client retrying one
+    resource is broken; an identity touching fifteen different resources is
+    enumerating.
+  - Check whether the denials stop after a deployment, which points at a
+    misconfiguration rather than an intruder.
+  - If the identity is a service account, find the pod it belongs to and treat
+    that pod as suspect.
+
+query:
+  bool:
+    filter:
+      - term:
+          stage: ResponseComplete
+      - term:
+          responseStatus.code: 403
+    must_not:
+      # Unauthenticated requests are a different problem — they never reach an
+      # identity and would all aggregate under one bucket.
+      - term:
+          user.username: system:anonymous
+
+# Applied on top of the query by the threshold logic. The rule fires for any
+# user.username with more than `threshold.value` matching events in the
+# lookback window.
+aggregation:
+  terms:
+    field: user.username
+    size: 50
+    min_doc_count: 11
+
+fixtures:
+  # Threshold rules are tested differently: the harness indexes every event in
+  # `match` and asserts the aggregation produces at least one bucket over the
+  # threshold, then indexes `no_match` alone and asserts it produces none.
+  match:
+    - description: Twelve denials from one service account enumerating resources
+      repeat: 12
+      event:
+        stage: ResponseComplete
+        verb: list
+        user:
+          username: system:serviceaccount:sample-app:sample-api
+          groups: ["system:serviceaccounts", "system:authenticated"]
+        sourceIPs: ["10.20.64.14"]
+        objectRef:
+          resource: secrets
+          namespace: kube-system
+        responseStatus:
+          code: 403
+          status: Failure
+          reason: Forbidden
+
+  no_match:
+    - description: Three scattered denials, below the threshold
+      repeat: 3
+      event:
+        stage: ResponseComplete
+        verb: get
+        user:
+          username: system:serviceaccount:kube-system:some-operator
+        objectRef:
+          resource: customresourcedefinitions
+        responseStatus:
+          code: 403
+          status: Failure
+          reason: Forbidden
+
+    - description: Successful requests never count, however many there are
+      repeat: 40
+      event:
+        stage: ResponseComplete
+        verb: list
+        user:
+          username: system:serviceaccount:elastic-system:filebeat
+        objectRef:
+          resource: pods
+        responseStatus:
+          code: 200

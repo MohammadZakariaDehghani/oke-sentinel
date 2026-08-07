@@ -1,0 +1,9 @@
+# Dependencies for the detection rule tests.
+#
+# Deliberately tiny: the tests read YAML rule definitions and talk to
+# Elasticsearch over HTTP. Pulling in the official Elasticsearch client would
+# add a version compatibility matrix for no benefit — the queries under test
+# are raw DSL and are sent as raw JSON.
+pytest==9.1.1
+pyyaml==6.0.3
+httpx==0.29.0

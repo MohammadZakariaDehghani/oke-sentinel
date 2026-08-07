@@ -164,7 +164,67 @@ data:
                 "authorization.k8s.io/reason":   { "type": "keyword", "ignore_above": 1024 }
               }
             },
-            "requestObject": { "type": "object", "enabled": false }
+            "requestObject": {
+              "dynamic": false,
+              "properties": {
+                "spec": {
+                  "properties": {
+                    "hostNetwork":        { "type": "boolean" },
+                    "hostPID":            { "type": "boolean" },
+                    "hostIPC":            { "type": "boolean" },
+                    "serviceAccountName": { "type": "keyword" },
+                    "nodeName":           { "type": "keyword" },
+                    "containers": {
+                      "properties": {
+                        "name":  { "type": "keyword" },
+                        "image": { "type": "keyword" },
+                        "securityContext": {
+                          "properties": {
+                            "privileged":               { "type": "boolean" },
+                            "allowPrivilegeEscalation": { "type": "boolean" },
+                            "runAsUser":                { "type": "long" },
+                            "runAsNonRoot":             { "type": "boolean" },
+                            "capabilities": {
+                              "properties": { "add": { "type": "keyword" } }
+                            }
+                          }
+                        }
+                      }
+                    },
+                    "volumes": {
+                      "properties": {
+                        "name": { "type": "keyword" },
+                        "hostPath": {
+                          "properties": { "path": { "type": "keyword" } }
+                        }
+                      }
+                    }
+                  }
+                },
+                "roleRef": {
+                  "properties": {
+                    "kind":     { "type": "keyword" },
+                    "name":     { "type": "keyword" },
+                    "apiGroup": { "type": "keyword" }
+                  }
+                },
+                "subjects": {
+                  "properties": {
+                    "kind":      { "type": "keyword" },
+                    "name":      { "type": "keyword" },
+                    "namespace": { "type": "keyword" }
+                  }
+                },
+                "rules": {
+                  "properties": {
+                    "apiGroups": { "type": "keyword" },
+                    "resources": { "type": "keyword" },
+                    "verbs":     { "type": "keyword" }
+                  }
+                },
+                "type": { "type": "keyword" }
+              }
+            }
           }
         }
       }

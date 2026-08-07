@@ -1,0 +1,151 @@
+# Kubernetes API server audit policy.
+#
+# This file is used where the control plane is ours — the kind cluster in CI
+# and any self-managed cluster. On OKE the API server is managed and this file
+# cannot be installed; audit events come from OCI Audit instead. See
+# terraform/modules/oke/audit_export.tf.
+#
+# The policy is written around one question: what would an incident review
+# need, and what is just noise that costs money to store?
+#
+# Levels, from cheapest to most expensive:
+#   None        do not log at all
+#   Metadata    who, when, what resource, what verb, what response code
+#   Request     the above plus the submitted object
+#   RequestResponse  the above plus what the API server returned
+#
+# Rules are evaluated in order and the first match wins, so the drops come
+# first.
+apiVersion: audit.k8s.io/v1
+kind: Policy
+
+# Do not log the RequestReceived stage. Every request would otherwise produce
+# two events, and the second one carries everything the first one does.
+omitStages:
+  - RequestReceived
+
+rules:
+  # ---------------------------------------------------------------------
+  # Drops. These come first and are the difference between an audit log you
+  # can afford to keep for a year and one you cannot.
+  # ---------------------------------------------------------------------
+
+  # Read-only traffic from the cluster's own components. kubelet and the
+  # controllers generate a continuous stream of watches and gets; logging them
+  # buries the events a human did.
+  - level: None
+    users:
+      - system:kube-scheduler
+      - system:kube-proxy
+      - system:apiserver
+      - system:kube-controller-manager
+      - system:serviceaccount:kube-system:endpoint-controller
+    verbs: ["get", "list", "watch"]
+
+  - level: None
+    userGroups: ["system:nodes"]
+    verbs: ["get", "list", "watch"]
+
+  # Health and discovery endpoints, hit constantly by probes.
+  - level: None
+    nonResourceURLs:
+      - /healthz*
+      - /livez*
+      - /readyz*
+      - /version
+      - /swagger*
+      - /openapi*
+      - /api*
+
+  # Lease renewals. Every component holding a leader-election lease writes one
+  # every couple of seconds, forever.
+  - level: None
+    resources:
+      - group: "coordination.k8s.io"
+        resources: ["leases"]
+
+  # Events are already an observable stream and are high volume.
+  - level: None
+    resources:
+      - group: ""
+        resources: ["events"]
+
+  # ---------------------------------------------------------------------
+  # The things detections are built on. These are logged at the highest useful
+  # level even though they cost more, because a metadata-only record of "someone
+  # created a pod" cannot tell you whether the pod was privileged.
+  # ---------------------------------------------------------------------
+
+  # Exec, attach and port-forward into a running container. Detection
+  # exec-into-pod. RequestResponse so the command line is captured.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources:
+          - pods/exec
+          - pods/attach
+          - pods/portforward
+          - pods/proxy
+
+  # Pod creation, at Request level so the securityContext and volumes are in
+  # the event. Detection privileged-pod-created reads exactly those fields.
+  - level: Request
+    verbs: ["create", "update", "patch"]
+    resources:
+      - group: ""
+        resources: ["pods"]
+      - group: "apps"
+        resources: ["deployments", "daemonsets", "statefulsets", "replicasets"]
+      - group: "batch"
+        resources: ["jobs", "cronjobs"]
+
+  # Anything touching RBAC. Detection cluster-admin-binding-created.
+  - level: RequestResponse
+    resources:
+      - group: "rbac.authorization.k8s.io"
+        resources: ["clusterroles", "clusterrolebindings", "roles", "rolebindings"]
+
+  # Service accounts and their tokens. Detection
+  # serviceaccount-token-requested.
+  - level: RequestResponse
+    resources:
+      - group: ""
+        resources: ["serviceaccounts", "serviceaccounts/token"]
+
+  # Secrets and config, at Metadata only — deliberately. Logging the request
+  # body would put the secret's contents into the audit log, which then has to
+  # be protected like a secret store. Detection secret-enumeration only needs
+  # to know who read what, not what it said.
+  - level: Metadata
+    resources:
+      - group: ""
+        resources: ["secrets", "configmaps"]
+      - group: ""
+        resources: ["serviceaccounts/token"]
+
+  # Admission and policy machinery. Changing a webhook is a way to disable
+  # enforcement quietly.
+  - level: RequestResponse
+    resources:
+      - group: "admissionregistration.k8s.io"
+        resources: ["validatingwebhookconfigurations", "mutatingwebhookconfigurations"]
+
+  # Node objects. Editing a node's labels or taints redirects scheduling.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete"]
+    resources:
+      - group: ""
+        resources: ["nodes", "nodes/status"]
+
+  # ---------------------------------------------------------------------
+  # Everything else.
+  # ---------------------------------------------------------------------
+
+  # All remaining writes, with the submitted object.
+  - level: Request
+    verbs: ["create", "update", "patch", "delete", "deletecollection"]
+
+  # All remaining reads, metadata only. This is what makes the repeated-403
+  # detection possible: a denied read still produces an event with its response
+  # code.
+  - level: Metadata

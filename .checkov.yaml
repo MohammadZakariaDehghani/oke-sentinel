@@ -1,23 +1,28 @@
 # Checkov configuration for the Terraform in this repository.
 #
-# Every entry in `skip-check` is a deliberate decision with a reason. If you add
-# one, write down why here — an unexplained skip is indistinguishable from a
-# missed finding.
+# Skips here are policy-level disagreements that apply repository-wide. Skips
+# that apply to one reviewed resource are inline `#checkov:skip=` comments
+# instead, so that a future resource of the same shape is still flagged.
 framework:
   - terraform
 
 quiet: true
 compact: true
 
+# Do not call out to the Prisma Cloud guidelines API. Findings are identical
+# without it and the run stays hermetic.
+skip-download: true
+
 # Modules are scanned through the environment stacks that call them, which is
-# where the real variable values are bound. Scanning them standalone produces
-# findings against unresolved variables.
+# where the real variable values are bound.
 directory:
   - terraform/environments
 
 skip-check:
-  # CKV_OCI_1..3 concern security lists. This project uses network security
-  # groups exclusively (see docs/decisions/0002-nsgs-over-security-lists.md);
-  # the default security list created with the VCN is left with no rules.
-  - CKV_OCI_1
-  - CKV_OCI_2
+  # CKV_OCI_21 wants NSG ingress rules to be stateless. OKE requires stateful
+  # rules: the control plane, kubelet and NodePort traffic all rely on
+  # connection tracking to allow return traffic, and Oracle's own reference
+  # rule set for OKE is stateful throughout. Making these rules stateless would
+  # require hand-writing the reverse of every rule and would still break
+  # ephemeral-port return paths.
+  - CKV_OCI_21

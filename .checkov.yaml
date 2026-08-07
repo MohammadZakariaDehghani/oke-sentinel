@@ -13,10 +13,12 @@ compact: true
 # without it and the run stays hermetic.
 skip-download: true
 
-# Modules are scanned through the environment stacks that call them, which is
+# There is deliberately no `directory` key here. Passing checkov more than one
+# directory in a single invocation does not scan them all — the second and
+# later directories are reported cumulatively against the first, and their
+# findings never appear. `make tf-checkov` invokes checkov once per stack
+# instead. Modules are scanned through the stacks that call them, which is
 # where the real variable values are bound.
-directory:
-  - terraform/environments
 
 skip-check:
   # CKV_OCI_21 wants NSG ingress rules to be stateless. OKE requires stateful

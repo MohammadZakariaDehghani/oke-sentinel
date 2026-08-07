@@ -1,0 +1,35 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# Every OCID here is a placeholder with the right shape and no meaning.
+
+tenancy_ocid            = "ocid1.tenancy.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexamp"
+parent_compartment_ocid = "ocid1.compartment.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleex"
+region                  = "eu-frankfurt-1"
+
+# In a pipeline, prefer InstancePrincipal or ResourcePrincipal over ApiKey so
+# there is no key file to manage on the runner.
+oci_auth_method         = "ApiKey"
+oci_config_file_profile = "DEFAULT"
+
+name_prefix        = "sentinel-prod"
+kubernetes_version = "v1.35.2"
+
+tag_namespace = "sentinel"
+cost_center   = "platform"
+owner         = "platform-team"
+
+# The API endpoint has no public IP here. These are the in-VCN CIDRs — a
+# bastion subnet, a VPN range — allowed to reach it.
+bastion_cidrs = ["10.20.3.0/24"]
+
+load_balancer_allowed_cidrs = ["0.0.0.0/0"]
+
+# Three nodes so losing one does not lose Elasticsearch quorum. 64 GB gives
+# a data node a 31 GB heap with room for the page cache, which is where
+# Elasticsearch actually gets its speed.
+node_pool_size  = 3
+node_shape      = "VM.Standard.E4.Flex"
+node_ocpus      = 4
+node_memory_gbs = 64
+
+# ssh_public_key = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIExampleKeyMaterialNotReal you@example.com"

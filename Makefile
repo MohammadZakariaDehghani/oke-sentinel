@@ -111,10 +111,16 @@ tf-lint: ## tflint across the modules and stacks
 	@command -v tflint >/dev/null 2>&1 || { echo "tflint not installed; skipping"; exit 0; }
 	tflint --chdir=terraform --recursive --config="$$(pwd)/.tflint.hcl"
 
+# One invocation per stack, on purpose: checkov given several directories at
+# once only really scans the first, and reports the rest cumulatively against
+# it, so findings in the later directories are silently lost.
 .PHONY: tf-checkov
 tf-checkov: ## checkov static analysis of the Terraform
 	@command -v checkov >/dev/null 2>&1 || { echo "checkov not installed; skipping"; exit 0; }
-	checkov --config-file .checkov.yaml
+	@for s in $(TF_STACKS) terraform/bootstrap; do \
+		echo "==> checkov $$s"; \
+		checkov --config-file .checkov.yaml --directory "$$s" || exit 1; \
+	done
 
 # ---------------------------------------------------------------------------
 # Kubernetes

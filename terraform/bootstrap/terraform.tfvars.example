@@ -1,0 +1,24 @@
+# Copy to terraform.tfvars and fill in. terraform.tfvars is gitignored.
+#
+# Every OCID below is a placeholder. Real ones look similar but are not
+# interchangeable — get yours from `oci iam compartment list` or the console.
+
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexamp"
+compartment_ocid = "ocid1.tenancy.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexamp"
+region           = "eu-frankfurt-1"
+
+# Authentication. ApiKey reads ~/.oci/config, so no key material or
+# fingerprint is ever written into this repository.
+oci_auth_method         = "ApiKey"
+oci_config_file_profile = "DEFAULT"
+
+state_bucket_name  = "oke-sentinel-tfstate"
+tag_namespace_name = "sentinel"
+
+# Restrict the CostCenter tag to a known set. Leave empty to accept any value.
+cost_centers = ["platform", "security"]
+
+# Leave false and create the Customer Secret Key in the console instead: the
+# secret half is shown once, and creating it here writes it to local state.
+create_customer_secret_key = false
+# state_backend_user_ocid  = "ocid1.user.oc1..aaaaaaaaexampleexampleexampleexampleexampleexampleexampleexam"

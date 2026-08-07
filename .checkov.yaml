@@ -1,0 +1,23 @@
+# Checkov configuration for the Terraform in this repository.
+#
+# Every entry in `skip-check` is a deliberate decision with a reason. If you add
+# one, write down why here — an unexplained skip is indistinguishable from a
+# missed finding.
+framework:
+  - terraform
+
+quiet: true
+compact: true
+
+# Modules are scanned through the environment stacks that call them, which is
+# where the real variable values are bound. Scanning them standalone produces
+# findings against unresolved variables.
+directory:
+  - terraform/environments
+
+skip-check:
+  # CKV_OCI_1..3 concern security lists. This project uses network security
+  # groups exclusively (see docs/decisions/0002-nsgs-over-security-lists.md);
+  # the default security list created with the VCN is left with no rules.
+  - CKV_OCI_1
+  - CKV_OCI_2

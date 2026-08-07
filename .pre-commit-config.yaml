@@ -1,0 +1,82 @@
+# Hook revisions are pinned to the exact versions this repository was developed
+# and verified against. Upgrade deliberately with `pre-commit autoupdate`, then
+# re-run `make lint` before committing the bump.
+#
+# Terraform hooks run the locally installed binaries via `repo: local` rather
+# than a third-party hook repo, so the version used by pre-commit is always the
+# same one used by `make` and by CI.
+default_install_hook_types: [pre-commit, commit-msg]
+
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: check-case-conflict
+      - id: check-merge-conflict
+      - id: check-json
+      - id: check-toml
+      - id: check-yaml
+        # Kubernetes manifests and Kustomize output are multi-document, and the
+        # Helm chart templates are Go templates rather than valid YAML.
+        args: ["--allow-multiple-documents"]
+        exclude: ^apps/sample-api/chart/templates/
+      - id: detect-private-key
+      - id: end-of-file-fixer
+      - id: mixed-line-ending
+        args: ["--fix=lf"]
+      - id: trailing-whitespace
+        args: ["--markdown-linebreak-ext=md"]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.8
+    hooks:
+      - id: ruff-check
+        args: ["--fix"]
+      - id: ruff-format
+
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.19.1
+    hooks:
+      - id: mypy
+        name: mypy (oci-inventory)
+        files: ^tools/oci-inventory/src/
+        args: ["--config-file=tools/oci-inventory/pyproject.toml"]
+        additional_dependencies:
+          - typer==0.20.0
+          - pydantic==2.12.4
+          - httpx==0.29.0
+      - id: mypy
+        name: mypy (sample-api)
+        files: ^apps/sample-api/src/
+        args: ["--config-file=apps/sample-api/pyproject.toml"]
+        additional_dependencies:
+          - fastapi==0.121.3
+          - pydantic==2.12.4
+
+  # Secret scanning. The baseline records reviewed, known-benign matches (for
+  # example the placeholder fingerprints in *.tfvars.example); anything new
+  # fails the hook.
+  - repo: https://github.com/Yelp/detect-secrets
+    rev: v1.5.0
+    hooks:
+      - id: detect-secrets
+        args: ["--baseline", ".secrets.baseline"]
+        exclude: ^(\.secrets\.baseline|security/kibana/.*\.ndjson)$
+
+  - repo: local
+    hooks:
+      - id: terraform-fmt
+        name: terraform fmt
+        entry: terraform fmt -recursive -diff
+        language: system
+        files: \.tf(vars)?$
+        pass_filenames: false
+
+      - id: checkov
+        name: checkov (terraform)
+        entry: checkov --quiet --compact --directory terraform --config-file .checkov.yaml
+        language: system
+        files: ^terraform/.*\.tf$
+        pass_filenames: false

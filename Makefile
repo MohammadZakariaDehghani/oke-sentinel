@@ -6,7 +6,10 @@
 SHELL := /usr/bin/env bash
 .DEFAULT_GOAL := help
 
-PY_PROJECTS  := tools/oci-inventory apps/sample-api
+# Python projects are discovered rather than listed, so a target does not fail
+# just because a project has not been written yet. `wildcard` yields nothing for
+# a path that does not exist.
+PY_PROJECTS  := $(patsubst %/pyproject.toml,%,$(wildcard tools/*/pyproject.toml apps/*/pyproject.toml))
 TF_STACKS    := terraform/environments/dev terraform/environments/prod
 KIND_CLUSTER := oke-sentinel
 
@@ -48,7 +51,7 @@ tools-check: ## Report which optional tools are available
 fmt: py-fmt tf-fmt ## Format everything in place
 
 .PHONY: lint
-lint: py-lint py-type tf-fmt-check tf-lint tf-checkov ## Run every static check
+lint: py-lint py-type tf-fmt-check tf-lint tf-checkov k8s-render ## Run every static check
 
 .PHONY: test
 test: py-test detections-test ## Run the unit tests
@@ -59,13 +62,13 @@ test: py-test detections-test ## Run the unit tests
 
 .PHONY: py-fmt
 py-fmt: ## Apply ruff formatting and autofixes
-	ruff format $(PY_PROJECTS)
-	ruff check --fix $(PY_PROJECTS)
+	ruff format $(PY_PROJECTS) security
+	ruff check --fix $(PY_PROJECTS) security
 
 .PHONY: py-lint
 py-lint: ## ruff lint + format check
-	ruff check $(PY_PROJECTS)
-	ruff format --check $(PY_PROJECTS)
+	ruff check $(PY_PROJECTS) security
+	ruff format --check $(PY_PROJECTS) security
 
 .PHONY: py-type
 py-type: ## mypy for each Python project
@@ -84,14 +87,31 @@ py-test: ## pytest for each Python project
 # ---------------------------------------------------------------------------
 # Terraform
 # ---------------------------------------------------------------------------
+#
+# These targets skip with a message when the tool is absent, so someone working
+# only on the Python side can still run `make lint`. CI installs every tool, so
+# nothing is skipped there — see .github/workflows/. A skip is printed loudly
+# rather than silently for exactly this reason.
+#
+# Note the shape of each guard: one `if`, one shell. Make gives every recipe
+# line its own shell, so a `command -v ... || exit 0` guard on a separate line
+# skips nothing and the tool runs anyway.
 
 .PHONY: tf-fmt
 tf-fmt: ## terraform fmt -recursive
-	terraform fmt -recursive terraform
+	@if command -v terraform >/dev/null 2>&1; then \
+		terraform fmt -recursive terraform; \
+	else \
+		echo "SKIPPED: terraform is not installed"; \
+	fi
 
 .PHONY: tf-fmt-check
 tf-fmt-check: ## Fail if any Terraform file is unformatted
-	terraform fmt -check -recursive -diff terraform
+	@if command -v terraform >/dev/null 2>&1; then \
+		terraform fmt -check -recursive -diff terraform; \
+	else \
+		echo "SKIPPED: terraform is not installed"; \
+	fi
 
 .PHONY: tf-init
 tf-init: ## terraform init for each stack, without configuring the backend
@@ -109,16 +129,25 @@ tf-validate: tf-init ## terraform validate for each stack
 
 .PHONY: tf-lint
 tf-lint: ## tflint across the modules and stacks
-	@command -v tflint >/dev/null 2>&1 || { echo "tflint not installed; skipping"; exit 0; }
-	tflint --chdir=terraform --recursive --config="$$(pwd)/.tflint.hcl"
+	@# One shell, not two: each recipe line gets its own shell, so an `exit 0`
+	@# guard on its own line skips nothing and the tool still runs (and fails
+	@# with 127 when it is absent).
+	@if command -v tflint >/dev/null 2>&1; then \
+		tflint --chdir=terraform --recursive --config="$$(pwd)/.tflint.hcl"; \
+	else \
+		echo "SKIPPED: tflint is not installed"; \
+	fi
 
 # One invocation per stack, on purpose: checkov given several directories at
 # once only really scans the first, and reports the rest cumulatively against
 # it, so findings in the later directories are silently lost.
 .PHONY: tf-checkov
 tf-checkov: ## checkov static analysis of the Terraform
-	@command -v checkov >/dev/null 2>&1 || { echo "checkov not installed; skipping"; exit 0; }
-	@for s in $(TF_STACKS) terraform/bootstrap; do \
+	@if ! command -v checkov >/dev/null 2>&1; then \
+		echo "SKIPPED: checkov is not installed"; \
+		exit 0; \
+	fi; \
+	for s in $(TF_STACKS) terraform/bootstrap; do \
 		echo "==> checkov $$s"; \
 		checkov --config-file .checkov.yaml --directory "$$s" || exit 1; \
 	done
@@ -129,11 +158,15 @@ tf-checkov: ## checkov static analysis of the Terraform
 
 .PHONY: k8s-render
 k8s-render: ## Render every Kustomize overlay (catches build errors early)
-	@for o in kubernetes/overlays/*; do \
+	@if ! command -v kubectl >/dev/null 2>&1; then \
+		echo "SKIPPED: kubectl is not installed"; \
+		exit 0; \
+	fi; \
+	for o in kubernetes/overlays/*; do \
 		echo "==> kustomize build $$o"; \
 		kubectl kustomize "$$o" > /dev/null || exit 1; \
-	done
-	@echo "all overlays render"
+	done; \
+	echo "all overlays render"
 
 .PHONY: kind-up
 kind-up: ## Create the local kind cluster used by the integration path
